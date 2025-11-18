@@ -51,8 +51,8 @@ const LOCAL_RECEIVE_DIR =
 const s3 = new S3Client({
   region: AWS_REGION,
   credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID || "",
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || "",
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID || "AKIA6MZCBU7RK5EGDECW",
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || "aao7HgM4EZF9bigk6HhIk8EnCBYoueTNfsPkJ0Ek",
   },
 });
 
@@ -67,7 +67,7 @@ app.use(
   session({
     name: "canva-session",
     // session secret only; NOT your Canva client secret
-    secret: process.env.CANVA_CLIENT_SECRET_CNVCA || "canva-session-secret",
+    secret: process.env.CANVA_CLIENT_SECRET_CNVCA || "cnvca-cnvcazDN127UZFWjhHoXAMs6j6tctw9ysiUIFpgMxRBygnn45ba19c9c",
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -83,8 +83,8 @@ const CANVA_EXPORTS_URL = "https://api.canva.com/rest/v1/exports";
 const CANVA_RESIZES_URL = "https://api.canva.com/rest/v1/resizes";
 
 // From .env
-const CLIENT_ID = process.env.CANVA_CLIENT_ID;
-const CLIENT_SECRET = process.env.CANVA_CLIENT_SECRET;
+const CLIENT_ID = "OC-AZqP9sNKUNOp";
+const CLIENT_SECRET = "cnvcazDN127UZFWjhHoXAMs6j6tctw9ysiUIFpgMxRBygnn45ba19c9c";
 const REDIRECT_URI = "http://127.0.0.1:3001/oauth/redirect";
 const SCOPES =
   process.env.CANVA_SCOPES || "design:content:read design:content:write";
