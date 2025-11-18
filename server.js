@@ -27,7 +27,7 @@ app.use(
   session({
     name: "canva-session",
     // session secret only; NOT your Canva client secret
-    secret: "cnvcaMdtbK-XMdorJyUmHXkDbKerrH1XkT3m2uCFgpBuJgWka3992036",
+    secret: "cnvca-JQndnNvp_VbQobBnkHuuWifCCRUjZJFxt77a1Qi9_M50db793f",
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -45,7 +45,7 @@ const CANVA_RESIZES_URL = "https://api.canva.com/rest/v1/resizes";
 // From .env
 // You can also make this process.env.CANVA_CLIENT_ID if you prefer
 const CLIENT_ID = "OC-AZqP9sNKUNOp";
-const CLIENT_SECRET = "cnvca-JQndnNvp_VbQobBnkHuuWifCCRUjZJFxt77a1Qi9_M50db793f";
+const CLIENT_SECRET = "cnvcazDN127UZFWjhHoXAMs6j6tctw9ysiUIFpgMxRBygnn45ba19c9c";
 const REDIRECT_URI = "http://127.0.0.1:3001/oauth/redirect";
 const SCOPES =
   process.env.CANVA_SCOPES || "design:content:read design:content:write";
