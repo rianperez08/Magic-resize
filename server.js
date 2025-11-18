@@ -7,6 +7,9 @@
 //      - 1:1  (1080x1080)
 //    via /rest/v1/resizes
 // 4) Export original + both resizes as PNG via /rest/v1/exports
+// 5) NEW: Download PNGs, store locally in canva_received/, then upload to S3
+//    bucket canva-bridge-storage in the form:
+//    images/cv_<groupCode>/cv_<groupCode>_<imageCode>.png
 
 require("dotenv").config();
 
@@ -15,6 +18,43 @@ const session = require("express-session");
 const fetch = require("node-fetch");
 const crypto = require("crypto");
 const path = require("path");
+const fs = require("fs");
+const fsp = fs.promises;
+
+// ---------- AWS S3 (NEW) ----------
+const {
+  S3Client,
+  PutObjectCommand,
+  ListObjectsV2Command,
+  GetObjectCommand,
+} = require("@aws-sdk/client-s3");
+
+const AWS_REGION = process.env.AWS_REGION || "ap-southeast-1";
+const S3_BUCKET =
+  process.env.CANVA_S3_BUCKET || process.env.AWS_S3_BUCKET || "canva-bridge-storage";
+
+// Local folder where PNGs will be stored first
+const LOCAL_RECEIVE_DIR =
+  process.env.LOCAL_RECEIVE_DIR || path.join(__dirname, "canva_received");
+
+// Ensure local receive dir exists
+(async () => {
+  try {
+    await fsp.mkdir(LOCAL_RECEIVE_DIR, { recursive: true });
+    console.log("[INIT] Local receive dir:", LOCAL_RECEIVE_DIR);
+  } catch (err) {
+    console.error("[INIT] Failed to create local receive dir:", err);
+  }
+})();
+
+// S3 client (uses IAM access key from env)
+const s3 = new S3Client({
+  region: AWS_REGION,
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID || "",
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || "",
+  },
+});
 
 const app = express();
 
@@ -27,7 +67,7 @@ app.use(
   session({
     name: "canva-session",
     // session secret only; NOT your Canva client secret
-    secret: "cnvca-JQndnNvp_VbQobBnkHuuWifCCRUjZJFxt77a1Qi9_M50db793f",
+    secret: process.env.CANVA_CLIENT_SECRET_CNVCA || "canva-session-secret",
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -43,9 +83,8 @@ const CANVA_EXPORTS_URL = "https://api.canva.com/rest/v1/exports";
 const CANVA_RESIZES_URL = "https://api.canva.com/rest/v1/resizes";
 
 // From .env
-// You can also make this process.env.CANVA_CLIENT_ID if you prefer
-const CLIENT_ID = "OC-AZqP9sNKUNOp";
-const CLIENT_SECRET = "cnvcazDN127UZFWjhHoXAMs6j6tctw9ysiUIFpgMxRBygnn45ba19c9c";
+const CLIENT_ID = process.env.CANVA_CLIENT_ID;
+const CLIENT_SECRET = process.env.CANVA_CLIENT_SECRET;
 const REDIRECT_URI = "http://127.0.0.1:3001/oauth/redirect";
 const SCOPES =
   process.env.CANVA_SCOPES || "design:content:read design:content:write";
@@ -93,6 +132,71 @@ function extractDesignIdFromUrl(urlString) {
   } catch (e) {
     return null;
   }
+}
+
+// ---------- NEW HELPERS: grouping, download, local save + S3 upload ----------
+
+// Generate a unique group code for this export batch.
+// Result looks like: cv_<shortDesign>_<TIMESTAMP_BASE36>
+function generateGroupCode(designId) {
+  const safeDesign = (designId || "design")
+    .replace(/[^A-Za-z0-9]/g, "")
+    .slice(0, 6)
+    .toUpperCase();
+  const ts = Date.now().toString(36).toUpperCase();
+  // This is the "cv_uniqueGroupCode(generated from canva app receiver)"
+  return `cv_${safeDesign}_${ts}`;
+}
+
+// Ensure a directory exists
+async function ensureDir(dirPath) {
+  await fsp.mkdir(dirPath, { recursive: true });
+}
+
+// Download a Canva PNG URL into a Buffer
+async function downloadPngToBuffer(url) {
+  console.log("[DOWNLOAD] Fetching PNG from Canva:", url);
+  const res = await fetch(url);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(
+      `Failed to download PNG (${res.status}): ${text.slice(0, 300)}`
+    );
+  }
+  const ab = await res.arrayBuffer();
+  return Buffer.from(ab);
+}
+
+// Core helper: download image, save locally, then upload to S3
+// groupCode: e.g. "cv_DESIGN1_ABC123"
+// imageCode: e.g. "orig_p1", "v916_p1", "sq_p1"
+async function storeLocallyAndUploadToS3(url, groupCode, imageCode) {
+  const buffer = await downloadPngToBuffer(url);
+
+  // Local path: <LOCAL_RECEIVE_DIR>/<groupCode>/<groupCode>_<imageCode>.png
+  const localDir = path.join(LOCAL_RECEIVE_DIR, groupCode);
+  await ensureDir(localDir);
+
+  const filename = `${groupCode}_${imageCode}.png`;
+  const localPath = path.join(localDir, filename);
+
+  await fsp.writeFile(localPath, buffer);
+  console.log("[LOCAL] Saved PNG:", localPath);
+
+  // S3 key: images/<groupCode>/<groupCode>_<imageCode>.png
+  const key = `images/${groupCode}/${filename}`;
+
+  const putCmd = new PutObjectCommand({
+    Bucket: S3_BUCKET,
+    Key: key,
+    Body: buffer,
+    ContentType: "image/png",
+  });
+
+  await s3.send(putCmd);
+  console.log("[S3] Uploaded PNG to:", `${S3_BUCKET}/${key}`);
+
+  return { localPath, s3Key: key };
 }
 
 // ---------- Canva API helpers (Resize + Export) ----------
@@ -174,12 +278,7 @@ async function createExportJobPng(accessToken, designId) {
     design_id: designId,
     format: {
       type: "png",
-      // Let Canva use design dimensions. For multi-page designs, this
-      // returns one URL per page in job.urls[].
       export_quality: "regular",
-      // Optionally, you could set:
-      // height, width, lossless, transparent_background, as_single_image, pages[]
-      // See docs if you want to tweak these.
     },
   };
 
@@ -377,6 +476,12 @@ function renderHomeHtml({ isAuthed, error, result }) {
     .row > div {
       flex: 1 1 260px;
     }
+    code {
+      font-size: 12px;
+      background:#111;
+      padding:2px 4px;
+      border-radius:4px;
+    }
   </style>
 </head>
 <body>
@@ -392,6 +497,7 @@ function renderHomeHtml({ isAuthed, error, result }) {
       <br/>1) Export the original design as <strong>PNG (16:9)</strong>
       <br/>2) <strong>Magic Resize</strong> to <strong>9:16</strong> (1080×1920) and export PNG
       <br/>3) <strong>Magic Resize</strong> to <strong>square</strong> (1080×1080) and export PNG
+      <br/>4) <strong>NEW:</strong> Save all PNGs locally under <code>canva_received/</code> and upload them to S3.
     </p>
 
     ${
@@ -426,7 +532,7 @@ function renderHomeHtml({ isAuthed, error, result }) {
           </div>
         </div>
         <button class="btn btn-primary" type="submit">
-          Export PNGs (16:9, 9:16, 1:1)
+          Export + Save Locally + Upload to S3
         </button>
         <a href="/disconnect" class="btn btn-secondary" style="text-decoration:none;">
           Disconnect
@@ -449,7 +555,10 @@ function renderHomeHtml({ isAuthed, error, result }) {
         <div style="font-size:13px;margin-bottom:8px;">
           Base design ID: <code>${result.designId}</code><br/>
           9:16 design ID: <code>${result.designId916}</code><br/>
-          1:1 design ID:  <code>${result.designIdSquare}</code>
+          1:1 design ID:  <code>${result.designIdSquare}</code><br/>
+          Group code (folder name): <code>${result.groupCode}</code><br/>
+          Local base folder: <code>${result.localBaseDir}</code><br/>
+          S3 bucket: <code>${result.s3Bucket}</code>
         </div>
         <ul style="padding-left:18px;font-size:13px;margin-top:6px;">
           ${renderPngList("Original PNG(s) – 16:9", result.originalPngUrls)}
@@ -457,7 +566,8 @@ function renderHomeHtml({ isAuthed, error, result }) {
           ${renderPngList("Resized PNG(s) – 1:1 (1080×1080)", result.pngSquareUrls)}
         </ul>
         <small>
-          Note: multi-page designs return one PNG per page. Each link above is a separate page.
+          Files were stored under <code>canva_received/${result.groupCode}/</code> locally,
+          and uploaded to <code>${result.s3Bucket}/images/${result.groupCode}/</code> in S3.
         </small>
       </div>
     `
@@ -491,7 +601,7 @@ app.get("/", (req, res) => {
 app.get("/auth/canva", (req, res) => {
   if (!CLIENT_ID || !CLIENT_SECRET || !REDIRECT_URI) {
     return res.send(
-      "Missing Canva env vars. Please set CANVA_CLIENT_SECRET and CANVA_REDIRECT_URI."
+      "Missing Canva env vars. Please set CANVA_CLIENT_ID and CANVA_CLIENT_SECRET."
     );
   }
 
@@ -614,6 +724,7 @@ app.get("/disconnect", (req, res) => {
 });
 
 // Export route: original 16:9 + 9:16 + 1:1 PNGs
+// NEW: For each PNG URL, we download, store locally, then upload to S3.
 app.post("/export", async (req, res) => {
   const accessToken = req.session.accessToken;
 
@@ -743,6 +854,55 @@ app.post("/export", async (req, res) => {
         ? exportSquareResult.job.urls || []
         : [];
 
+    // ---------- NEW: Local save + S3 upload for all PNG URLs ----------
+    const groupCode = generateGroupCode(designId);
+    console.log("[EXPORT] Using groupCode:", groupCode);
+
+    const uploadTasks = [];
+
+    // Original 16:9 PNGs
+    originalPngUrls.forEach((url, idx) => {
+      const imageCode = `orig_p${idx + 1}`;
+      uploadTasks.push(
+        storeLocallyAndUploadToS3(url, groupCode, imageCode).catch((err) => {
+          console.error(
+            `[EXPORT] Failed handling original PNG ${idx + 1}:`,
+            err
+          );
+        })
+      );
+    });
+
+    // 9:16 PNGs
+    png916Urls.forEach((url, idx) => {
+      const imageCode = `v916_p${idx + 1}`;
+      uploadTasks.push(
+        storeLocallyAndUploadToS3(url, groupCode, imageCode).catch((err) => {
+          console.error(
+            `[EXPORT] Failed handling 9:16 PNG ${idx + 1}:`,
+            err
+          );
+        })
+      );
+    });
+
+    // 1:1 PNGs
+    pngSquareUrls.forEach((url, idx) => {
+      const imageCode = `sq_p${idx + 1}`;
+      uploadTasks.push(
+        storeLocallyAndUploadToS3(url, groupCode, imageCode).catch((err) => {
+          console.error(
+            `[EXPORT] Failed handling 1:1 PNG ${idx + 1}:`,
+            err
+          );
+        })
+      );
+    });
+
+    // Wait for all local saves + S3 uploads to finish
+    await Promise.all(uploadTasks);
+    console.log("[EXPORT] All PNGs handled locally + S3 for group:", groupCode);
+
     // Save for UI
     req.session.lastResult = {
       designId,
@@ -751,6 +911,9 @@ app.post("/export", async (req, res) => {
       originalPngUrls,
       png916Urls,
       pngSquareUrls,
+      groupCode,
+      localBaseDir: LOCAL_RECEIVE_DIR,
+      s3Bucket: S3_BUCKET,
     };
     req.session.lastError = null;
   } catch (e) {
@@ -762,8 +925,81 @@ app.post("/export", async (req, res) => {
   res.redirect("/");
 });
 
+// ---------- Unity helper endpoints ----------
+
+// List all PNG images under images/
+app.get("/unity/list-images", async (req, res) => {
+  try {
+    const prefix = "images/";
+
+    const cmd = new ListObjectsV2Command({
+      Bucket: S3_BUCKET,
+      Prefix: prefix,
+    });
+
+    const out = await s3.send(cmd);
+
+    const items =
+      (out.Contents || [])
+        .filter((o) => o.Key && o.Key.endsWith(".png"))
+        .map((o) => ({
+          key: o.Key,
+          size: o.Size || 0,
+          lastModified: o.LastModified
+            ? o.LastModified.toISOString?.() || null
+            : null,
+        })) || [];
+
+    res.json({ ok: true, items });
+  } catch (e) {
+    console.error("[UNITY] /unity/list-images error", e);
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
+// Download a single PNG by S3 key (proxy)
+app.get("/unity/download-image", async (req, res) => {
+  const key = req.query.key;
+  if (!key) {
+    return res.status(400).send("Missing 'key' query param");
+  }
+
+  try {
+    console.log("[UNITY] download-image for key:", key);
+
+    const cmd = new GetObjectCommand({
+      Bucket: S3_BUCKET,
+      Key: key,
+    });
+
+    const out = await s3.send(cmd);
+
+    res.setHeader("Content-Type", "image/png");
+
+    if (out.Body && typeof out.Body.pipe === "function") {
+      // Node stream – pipe directly
+      out.Body.pipe(res);
+    } else if (out.Body && typeof out.Body.transformToByteArray === "function") {
+      // Some runtimes expose transformToByteArray
+      const bytes = await out.Body.transformToByteArray();
+      res.end(Buffer.from(bytes));
+    } else if (out.Body && out.Body.arrayBuffer) {
+      const buf = Buffer.from(await out.Body.arrayBuffer());
+      res.end(buf);
+    } else {
+      res.status(500).send("Unexpected S3 body type.");
+    }
+  } catch (e) {
+    console.error("[UNITY] /unity/download-image error", e);
+    res.status(500).send("Error fetching image: " + String(e));
+  }
+});
+
+
 // ---------- Start server ----------
 const port = process.env.PORT || 3001;
 app.listen(port, () => {
   console.log(`✅ Server running at http://127.0.0.1:${port}`);
+  console.log(`   Local receive dir: ${LOCAL_RECEIVE_DIR}`);
+  console.log(`   S3 bucket: ${S3_BUCKET} (region: ${AWS_REGION})`);
 });
