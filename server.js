@@ -27,7 +27,7 @@ app.use(
   session({
     name: "canva-session",
     // session secret only; NOT your Canva client secret
-    secret: "cnvca-JQndnNvp_VbQobBnkHuuWifCCRUjZJFxt77a1Qi9_M50db793f",
+    secret: "cnvcaMdtbK-XMdorJyUmHXkDbKerrH1XkT3m2uCFgpBuJgWka3992036",
     resave: false,
     saveUninitialized: false,
     cookie: {
