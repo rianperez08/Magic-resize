@@ -1,19 +1,28 @@
 {
-  "name": "canva-magic-pptx",
+  "name": "canva-magic-pptx-local",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Local Canva Connect app that resizes 16:9 designs to 4:3 and exports PPTX",
+  "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cookie-session": "^2.0.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "express-session": "^1.18.2",
+    "node-fetch": "^2.7.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rianperez08/Magic-resize.git"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
-  "dependencies": {
-    "cookie-session": "^2.1.1",
-    "dotenv": "^17.2.3",
-    "express": "^5.1.0",
-    "node-fetch": "^2.7.0"
-  }
+  "bugs": {
+    "url": "https://github.com/rianperez08/Magic-resize/issues"
+  },
+  "homepage": "https://github.com/rianperez08/Magic-resize#readme"
 }
