@@ -84,7 +84,7 @@ const CANVA_RESIZES_URL = "https://api.canva.com/rest/v1/resizes";
 
 // From .env
 const CLIENT_ID = "OC-AZqP9sNKUNOp";
-const CLIENT_SECRET = "cnvcazDN127UZFWjhHoXAMs6j6tctw9ysiUIFpgMxRBygnn45ba19c9c";
+const CLIENT_SECRET = "cnvcaU5jePVWcyy7-1xescatSB4EwLsDfskwhmQwDBODD0b8a77baa8e";
 const REDIRECT_URI = "http://127.0.0.1:3001/oauth/redirect";
 const SCOPES =
   process.env.CANVA_SCOPES || "design:content:read design:content:write";
